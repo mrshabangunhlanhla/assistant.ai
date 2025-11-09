@@ -1,0 +1,5 @@
+This conversation involved:
+- Bob introducing himself as Bob from Tembisa, who enjoys Amapiano music.
+- My previous name-less state, and Bob naming me 'Joshua'.
+- Discussion and re-creation of 'convo_2.txt' which stores information about Bob.
+- Creation and update of 'reminder_1.txt' for a meeting on November 5th, 2025, including 'The AI break through i just discovered'.

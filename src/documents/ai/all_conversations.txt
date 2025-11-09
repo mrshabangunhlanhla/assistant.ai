@@ -1,0 +1,15 @@
+--- convo_1.txt ---
+Our conversation began with an inquiry about the 'assets' directory. We then explored its contents, first finding 'example.txt', and later discovering 'image.png', 'text.txt', and 'video.mp4'. We read the content of 'example.txt' and 'text.txt'. Finally, we established that subsequent file operations would focus on the 'assets' directory.
+
+--- convo_2.txt ---
+Information to remember about you:
+- Name: Bob
+- Origin: Tembisa
+- Music Preference: Amapiano
+
+--- convo_3.txt ---
+This conversation involved:
+- Bob introducing himself as Bob from Tembisa, who enjoys Amapiano music.
+- My previous name-less state, and Bob naming me 'Joshua'.
+- Discussion and re-creation of 'convo_2.txt' which stores information about Bob.
+- Creation and update of 'reminder_1.txt' for a meeting on November 5th, 2025, including 'The AI break through i just discovered'.
