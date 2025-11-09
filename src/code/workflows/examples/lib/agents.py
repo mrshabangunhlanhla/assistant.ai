@@ -27,6 +27,10 @@ class OptimalReActAgent:
     and robust error handling, adhering to the ReAct paper's principles.
     It provides both asynchronous (stream, async_invoke) and 
     synchronous (stream_sync, invoke) interfaces.
+    
+    Supports two modes:
+    1. dense (default): Enforces a strict (Thought -> Action) loop[cite: 127].
+    2. sparse: Allows the LLM to decide when to think or act.
     """
     # Regex to robustly parse LLM output (common LangChain format)
     ACTION_REGEX = re.compile(r"Action:\s*(\w+)\s*\[(.*?)\]", re.DOTALL)
@@ -47,6 +51,7 @@ class OptimalReActAgent:
         llm: BaseLanguageModel,
         tools: List[BaseTool],
         max_iterations: int = 7,
+        sparse_reasoning: bool = False, # <-- MODIFICATION
         system_prompt: Optional[str] = None
     ):
         """Initializes the ReAct Agent."""
@@ -54,6 +59,7 @@ class OptimalReActAgent:
         # The agent always includes the 'finish' tool for termination
         self.tools_map = {t.name: t for t in tools + [self.finish]}
         self.max_iterations = max_iterations
+        self.sparse_reasoning = sparse_reasoning # <-- MODIFICATION
         self.tool_names = list(self.tools_map.keys())
         self.system_prompt_text = system_prompt or self._get_default_system_prompt(tools)
         
@@ -63,26 +69,51 @@ class OptimalReActAgent:
         return "\n".join([f"- {t.name}: {t.description}" for t in tools])
 
     def _get_default_system_prompt(self, tools: List[BaseTool]) -> str:
-        """Generates a ReAct-style system prompt."""
+        """Generates a ReAct-style system prompt based on the reasoning mode."""
         tool_list = self._format_tool_list(tools)
         
-        return (
-            "You are an intelligent reasoning agent that follows the ReAct format exactly.\n"
-            "Your process must alternate strictly between Thought, Action, and Observation.\n"
-            "You can reason (Thought), act (Action), and observe (Observation).\n"
-            "At each step, output ONLY one Thought and one Action.\n"
-            "Use the 'finish' tool with your final answer when the task is complete.\n\n"
-            "Available tools:\n"
-            f"{tool_list}\n"
-            f"- finish: {self.finish.description}\n\n"
-            "Format MUST be:\n"
-            "Thought: I need to [reasoning step]\n"
-            "Action: tool_name[tool_input]\n\n"
-            "Observation: [Tool result]\n\n"
-            "OR Final Answer:\n"
-            "Thought: I have gathered enough information.\n"
-            "Action: finish[The final answer to the user's request.]\n"
-        )
+        # <-- MODIFICATION START -->
+        if self.sparse_reasoning:
+            # Prompt for sparse reasoning (decision-making tasks)
+            # Allows for asynchronous occurrence of thoughts and actions 
+            return (
+                "You are an intelligent reasoning agent.\n"
+                "You can reason (Thought) or act (Action) to solve the task.\n"
+                "At each step, you can choose to output a Thought to reason about the state, "
+                "or an Action to interact with the environment. You can also do both.\n"
+                "Thoughts can be used to decompose goals, track progress, and update your plan, "
+                "but are not required on every step.\n"
+                "Use the 'finish' tool with your final answer when the task is complete.\n\n"
+                "Available tools:\n"
+                f"{tool_list}\n"
+                f"- finish: {self.finish.description}\n\n"
+                "Example Formats:\n"
+                "Thought: I need to [reasoning step]\n"
+                "Action: tool_name[tool_input]\n\n"
+                "OR\n"
+                "Action: tool_name[tool_input]\n\n"
+                "OR\n"
+                "Thought: I need to update my plan. First, I will... [reasoning step]\n\n"
+                "Observation: [Tool result]\n"
+            )
+        else:
+            # Original prompt for dense reasoning (knowledge-intensive tasks)
+            # Enforces interleaved thought-action steps 
+            return (
+                "You are an intelligent reasoning agent that follows the ReAct format exactly.\n"
+                "Your process must alternate strictly between Thought, Action, and Observation.\n"
+                "You can reason (Thought), act (Action), and observe (Observation).\n"
+                "At each step, output ONLY one Thought and one Action.\n"
+                "Use the 'finish' tool with your final answer when the task is complete.\n\n"
+                "Available tools:\n"
+                f"{tool_list}\n"
+                f"- finish: {self.finish.description}\n\n"
+                "Format MUST be:\n"
+                "Thought: I need to [reasoning step]\n"
+                "Action: tool_name[tool_input]\n\n"
+                "Observation: [Tool result]\n\n"
+            )
+        # <-- MODIFICATION END -->
         
     def _parse_agent_output(self, llm_output: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         """
@@ -136,6 +167,7 @@ class OptimalReActAgent:
     async def stream(self, user_input: str) -> AsyncGenerator[Dict[str, str], None]:
         """
         The core ReAct loop, yielding events for streaming and tracing (Asynchronous).
+        Supports both dense (Thought/Action) and sparse (Thought or Action) reasoning.
         """
         history: List[BaseMessage] = [SystemMessage(content=self.system_prompt_text), HumanMessage(content=user_input)]
         
@@ -148,6 +180,13 @@ class OptimalReActAgent:
                 llm_response_message: AIMessage = await self.llm.ainvoke(history)
                 llm_output = llm_response_message.content
 
+                # <-- MODIFICATION START -->
+                # For sparse reasoning, always add the LLM's output to history
+                # This allows for "thought-only" steps
+                if self.sparse_reasoning:
+                    history.append(llm_response_message)
+                # <-- MODIFICATION END -->
+                
                 # 2. Parsing LLM Output
                 thought, action_name, action_input = self._parse_agent_output(llm_output)
 
@@ -162,24 +201,42 @@ class OptimalReActAgent:
                     return 
                 
                 # 5. Handle Action
+                action_executed = False # Flag to track if an action was taken
                 if action_name and action_input is not None:
                     
                     yield {"type": "action_input", "content": f"Action: {action_name}[{action_input}]"}
                     
                     # 6. Execute Tool
                     observation = await self._execute_tool(action_name, action_input)
+                    action_executed = True
                     
                     # 7. Output Observation (for tracing)
                     yield {"type": "observation", "content": observation}
                     
                     # 8. Update History for next turn
-                    history.append(AIMessage(content=llm_output))
-                    history.append(HumanMessage(content=f"Observation: {observation}"))
+                    # <-- MODIFICATION START -->
+                    if not self.sparse_reasoning:
+                        # Dense mode: add the LLM's T-A pair now
+                        history.append(AIMessage(content=llm_output))
                     
-                elif thought is None and action_name is None:
-                    error_msg = f"LLM output failed to parse ReAct format. Output:\n{llm_output}"
+                    # Both modes: add the tool observation
+                    history.append(HumanMessage(content=f"Observation: {observation}"))
+                    # <-- MODIFICATION END -->
+
+                # 9. Handle invalid LLM output based on reasoning mode
+                # <-- MODIFICATION START -->
+                if not self.sparse_reasoning and (thought is None or not action_executed):
+                    # Dense mode requires BOTH thought and action
+                    error_msg = f"LLM output failed to follow DENSE ReAct format (Thought AND Action required). Output:\n{llm_output}"
                     yield {"type": "error", "content": error_msg}
                     return
+                
+                if self.sparse_reasoning and thought is None and not action_executed:
+                    # Sparse mode requires AT LEAST a thought OR an action
+                    error_msg = f"LLM output failed to parse Thought or Action. Output:\n{llm_output}"
+                    yield {"type": "error", "content": error_msg}
+                    return
+                # <-- MODIFICATION END -->
 
             except ToolNotFoundError as e:
                 yield {"type": "error", "content": f"Parsing Error: {str(e)}. The tool suggested does not exist."}
@@ -193,7 +250,7 @@ class OptimalReActAgent:
                 yield {"type": "error", "content": f"An unexpected error occurred during iteration {i}: {type(e).__name__}: {str(e)}"}
                 return
         
-        # 9. Max Iterations reached
+        # 10. Max Iterations reached
         yield {"type": "error", "content": f"Max iterations ({self.max_iterations}) reached without finding a Final Answer. Agent stopped."}
 
 
