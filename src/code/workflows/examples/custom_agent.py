@@ -33,28 +33,28 @@ async def main(query: str):
         
         event_type = event["type"]
         content = event["content"]
-        if event_type == "final_answer":
-            engine.say(content)
+        # if event_type == "final_answer":
+        #     engine.say(content)
+        #     print(f"AI: {content}\n")
+        #     engine.runAndWait()
+
+        #     # Stop the engine (important for releasing resources)
+        #     engine.stop()
+
+
+        if event_type == "thought":
+            print(f" [THOUGHT]: {content}")
+        elif event_type == "action_input":
+            print(f" [ACTION]: {content}")
+        elif event_type == "observation":
+            print(f" [OBSERVATION]: {content}")
+        elif event_type == "final_answer":
             print(f"AI: {content}\n")
-            engine.runAndWait()
-
-            # Stop the engine (important for releasing resources)
-            engine.stop()
-
-
-        # if event_type == "thought":
-        #     print(f" [THOUGHT]: {content}")
-        # elif event_type == "action_input":
-        #     print(f" [ACTION]: {content}")
-        # elif event_type == "observation":
-        #     print(f" [OBSERVATION]: {content}")
-        # elif event_type == "final_answer":
-        #     # print(f"AI: {content}\n")
-        #     print(f"\n<<< FINAL ANSWER >>>\n{content}\n<<< /FINAL ANSWER >>>")
-        # elif event_type == "error":
-        #     print(f"\n[!!! AGENT ERROR !!!] {content}")
-        # elif event_type == "info":
-        #     print(f"\n{content}")
+            # print(f"\n<<< FINAL ANSWER >>>\n{content}\n<<< /FINAL ANSWER >>>")
+        elif event_type == "error":
+            print(f"\n[!!! AGENT ERROR !!!] {content}")
+        elif event_type == "info":
+            print(f"\n{content}")
 
 
 if __name__ == "__main__":
